@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Advanced query algebra</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <style type="text/css">
+      @import url(http://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(http://fonts.googleapis.com/css?family=Lato:400,700,400italic);
+      @import url(http://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body {
+        font-family: 'Lato';
+        font-size: 1.2em;
+      }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz';
+        font-weight: normal;
+      }
+      h1 {
+        font-size: 3em;
+      }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+      li { line-height: 1.4em; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+class: center, middle
+
+# Beyond GET
+
+## Shaping REST API responses with advanced query algebra
+
+---
+
+## Bithub experience
+
+Integrates several REST APIs <br> (Github, Twitter, Meetup, StackExchange, FourSquare, Facebook, ...)
+
+--
+
+All of them give us little control over structure of data in response.
+
+--
+## Common features
+
+- authorization
+- pagination
+- rate limiting
+- basic search
+- versioning
+
+
+--
+
+- ordering
+- sorting
+- embedding
+- date range
+- basic search
+
+
+--
+## What horrors have you seen as frontend developers?
+
+---
+
+## Bithub experience #2
+
+We built an API which knows how to handle complex queries.
+
+--
+
+DRY principe, it doesn't make sense to build another endpoint for every case we need to handle.
+
+--
+
+Request that loads latest events:
+```
+GET http://bithub.com/api/v1/events?
+  order=thread_updated_ts:desc&
+  thread_updated_date=2014-08-19:2014-10-15&
+  offset=0&
+  limit=1000&
+  without_future=true
+```
+
+--
+
+## The result
+
+Ended up with sloppy implementation, uses Muster gem.
+
+--
+
+## The solution
+
+Standardized query algebra, clients have more power over shaping responses.
+
+Extract usable parts from Bithub codebase and build standalone RoR gem.
+
+---
+
+class: center, middle
+
+# Features
+
+---
+
+## Filtering
+
+Comparation
+```
+?name=veljko
+?body=%canjs% // '%' is unsafe!!!
+```
+
+--
+Negation
+```
+?name=!veljko
+```
+
+--
+Null and existance (hstore, json extentions)
+```
+?name=exists //'null' and 'exists' are reserved keywords
+```
+
+--
+Ranges
+```
+?id=100..200
+?id=100..
+?id=..200
+?date=20140818..20140823
+```
+
+--
+Nested objects
+```
+?author.name=veljko
+```
+
+---
+
+## Embedding
+```
+?embed[]=author&embed[]=comments&embed[]=comments.author
+```
+
+--
+## Ordering
+```
+?order[]=date:desc&order[]=comment.date // 'asc' by default
+```
+
+--
+## Pagination
+```
+?offset=100&limit=25
+```
+
+Hypermedia link relations? RFC5988, used by Github
+
+--
+## Other features?
+
+- aggregation functions (`sum`, ...)
+- grouping
+
+--
+- you name it!
+
+---
+
+## Syntax definition (draft!)
+
+```
+params    = <param> *("&" <param>)
+param     = <equation> / <embed> / <order> / <group> / <limit> / <offset>
+          ; "embed", "order", "group", "limit" and "offset" are reserved keywords
+
+equation  = <attribute> "=" [!] <value>
+embed     = "embed" ["[]"] "=" <attribute>
+order     = "order" ["[]"] "=" <attribute> [":asc" / ":desc"] ; ":asc" by default
+group     = "group" ["[]"] "=" <attribute>
+limit     = "limit=" 1*DIGIT
+offset    = "offset=" 1*DIGIT
+
+attribute = 1*(ALPHANUM / ".") [!]
+
+value     = "null" / "exists" / <input> / <range> / <or> / <func>
+          ; "null" and "exists" are reserved keywords
+range     = (<input> ".." <input>) / (<input> "..") / (".." <input>)
+or        = <input> *("|" <input>)
+func      = <funcname> "(" *<args> ")"
+input     = 1*("%" / ALPHANUM)
+          ; "%" is reserved keyword for sequence of characters (hint: SQL LIKE)
+		  ; todo: "%" is already used for escaping!
+          ; todo: think about valid characters
+
+ALPHANUM  = ALPHA / DIGIT
+
+```
+
+RFC5234, Augmented BNF for Syntax Specifications
+
+---
+
+class: center, middle
+
+# Implementation
+
+---
+
+## HTTP request
+
+```
+GET /blogposts?tag=!javascript&created_at=20140101..&
+               embed[]=author&embed[]=comments.author&
+               order[]=created_at:desc
+```
+
+--
+## Rack middleware
+
+Parses query and builds up syntax hash, still ORM agnostic
+
+```ruby
+{
+  :model => "blogposts",
+  :filter => [{
+    :attr => :tag,
+    :conditions => [{:match => "javascript", :negation => true}],
+    :negation => false
+  }, {
+    :attr => :created_at,
+    :conditions => [{:from=>"20140101", :to=>nil}],
+    :negation => false
+  }],
+  :embed => ["author", "comments", "comments.author"],
+  :joins => [{:table_name => "comments"}],
+  :order => [{:attr => "created_at", :direction => "desc"}]
+}
+```
+
+---
+## ActiveRecord/AREL builder
+
+Used by default in RoR, but could also be some other ORM
+
+```ruby
+Blogpost
+  .joins(:author)
+  .joins(comments: [:author])
+  .where("created_at >= '?'", params[:start_date])
+  .where.not(tag: "javascript")
+  .order(created_at: :desc)
+```
+
+--
+## JSON response
+
+```javascript
+[{
+  title: "Blogpost",
+  body: "Lorem ipsum ...",
+  created_at: "2014-08-19"
+  author: {
+    name: "John Doe",
+    email: "john.doe@gmail.com"
+  },
+  tag: "ruby",
+  comments: [{
+    body: "Some useful comment",
+    author: {
+      name: "Another Doe"
+    }
+  }]
+} //, {...}]
+```
+
+---
+
+class: center, middle
+
+# Possible issues
+
+---
+
+## Domain specific
+
+Is it possible to generalize it?
+
+Possibly, it translates to ORM / SQL
+
+--
+## CPU / IO cost
+
+Increased, by nothing new in here
+
+- caching
+- rate limiting
+- pagination (limit max number of items per response)
+
+
+--
+## What about other frameworks
+
+Reimplementation :/
+(ORMs are the bottleneck, but basic functionality should be doable)
+
+Beside RoR just to name some, Express, Django, PHP?, Java? .NET?
+
+---
+
+class: center, middle
+
+# Questions / Comments?
+
+
+    </textarea>
+    <script src="http://gnab.github.io/remark/downloads/remark-0.5.9.min.js" type="text/javascript">
+    </script>
+    <script type="text/javascript">
+      var slideshow = remark.create();
+    </script>
+  </body>
+</html>

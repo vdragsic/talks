@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Multitenacy</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <style type="text/css">
+      @import url(http://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(http://fonts.googleapis.com/css?family=Lato:400,700,400italic);
+      @import url(http://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body {
+        font-family: 'Lato';
+        font-size: 1.4em;
+      }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz';
+        font-weight: normal;
+      }
+      h1 {
+        font-size: 3em;
+      }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+      li { line-height: 1.4em; }
+      img[alt=downarrow] { margin-left: 200px; width: 60px; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+class: center, middle
+
+# Multitenancy
+
+---
+
+## What is it actually?
+
+- single (web) application
+- multiple "clients", tenants
+- hint: stackexchange example
+
+
+--
+
+- single data model, multiple "instances"
+- data can be partly shared or fully isolated
+
+--
+
+Actually it can be compared to SIMD concept in parallel computing.
+
+---
+
+## Data isolation
+
+1. Multiple databases
+2. Prefixed tables
+   `tenant_name__table_name`
+3. SQL schemas!
+
+--
+
+PostgreSQL natively supports data schemas! We can think about schemas as namespaces in database.
+
+```sql
+SELECT * FROM schema_name.users;
+
+--OR
+
+SET search_path = schema_name;
+SELECT * FROM users;
+```
+
+---
+
+
+## Example data model
+
+![example data model](multitenancy_data_model.svg)
+
+---
+
+## Workflow
+
+```
+GET http://bitovi.bithub.com/api/v2/entities
+```
+
+--
+![downarrow](http://upload.wikimedia.org/wikipedia/commons/a/a3/Down_arrow.svg)
+
+Current tenant is determined in Rack middleware.
+
+```sql
+SET search_path = bitovi, public; -- pg_catalog
+```
+
+--
+![downarrow](http://upload.wikimedia.org/wikipedia/commons/a/a3/Down_arrow.svg)
+
+Rails app fetches data from database and generates response.
+
+Search path is set back.
+
+---
+
+## Creating new tenant
+
+1. "register" tenant
+2. create new schema
+3. create data model in new schema
+4. seed data if needed
+
+--
+
+## Apartment gem
+
+- provides multitenancy in RoR out of the box
+- support for elevators
+- excluded models
+- slight modifications for Bithub usecase (PR)
+
+
+---
+
+class: center, middle
+
+# Questions?
+
+    </textarea>
+    <script src="http://gnab.github.io/remark/downloads/remark-0.5.9.min.js" type="text/javascript">
+    </script>
+    <script type="text/javascript">
+      var slideshow = remark.create();
+    </script>
+  </body>
+</html>
